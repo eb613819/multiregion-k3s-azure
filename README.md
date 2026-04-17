@@ -407,6 +407,17 @@ Three outputs are defined:
 - `vm_private_ips` — map of all node names to private IPs
 - `control_plane_private_ip` — private IP of vm0 specifically, used by Ansible when constructing the k3s agent join command for Region B workers
 
+In addition to supporting manual access and cluster bootstrap, these outputs are used to **automatically generate an Ansible inventory file via OpenTofu**. A `local_file` resource consumes `vm_public_ips` (and role/region metadata from `local.nodes`) to produce a structured `inventory.yml`.
+
+This approach ensures that:
+
+- The Ansible inventory always reflects the current infrastructure state  
+- No manual IP copying is required between provisioning and configuration stages  
+- Node grouping (control plane vs workers) is derived directly from Terraform-defined roles  
+- Multi-region placement is preserved automatically in the inventory structure  
+
+The generated inventory is used as the single source of truth for Ansible when installing and configuring the k3s cluster.
+
 ## 5.6 Baseline Latency Measurements
 
 After provisioning, ping was used to measure round-trip latency between nodes. All measurements were taken over private IPs via the VNet peering link.
