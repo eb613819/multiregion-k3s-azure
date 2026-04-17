@@ -21,6 +21,7 @@ k3s_azure.pub
 *.retry
 vault_pass.txt
 .vault_pass
+
 ./ansible/inventory.yml
 
 # OS
