@@ -17,12 +17,11 @@ id_rsa.pub
 k3s_azure
 k3s_azure.pub
 
-# Ansible retry files
+# Ansible files
 *.retry
-
-# Ansible vault files
 vault_pass.txt
 .vault_pass
+./ansible/inventory.yml
 
 # OS
 .DS_Store
