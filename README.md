@@ -142,7 +142,7 @@ Baseline latency measurements confirmed the expected topology:
 | Source | Destination | Relationship | Avg Latency |
 |--------|-------------|--------------|-------------|
 | vm0 | vm1 | Intra-region (northcentralus) | < 1ms |
-| vm0 | vm2 | Intra-region (northcentralus) | < 1ms |
+| vm3 | vm4 | Intra-region (mexicocentral) | < 1ms |
 | vm0 | vm3 | Cross-region | ~52ms |
 | vm0 | vm4 | Cross-region | ~52ms |
 
