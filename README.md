@@ -306,10 +306,12 @@ Note: public IPs are dynamically assigned and will change after each destroy and
 ```
 k3s-multiregion-azure/
 ├── providers.tf                # Provider
+├── locals.tf                   # Locals
 ├── main.tf                     # Resource group, VNets, peering, NSGs
 ├── variables.tf                # All variable declarations
 ├── vms.tf                      # Public IPs, NICs, NSG associations, VMs
 ├── outputs.tf                  # Public IPs, private IPs, control plane IP
+├── inventory.tf                # Generates an Ansible inventory
 ├── terraform.tfvars            # Non-sensitive configuration values
 ├── secrets.auto.tfvars         # gitignored — subscription ID
 ├── secrets.auto.tfvars.example # Committed template for secrets file
@@ -353,12 +355,24 @@ Each region has its own VNet with a non-overlapping address space:
 
 Non-overlapping ranges are required because once the VNets are peered, Azure routes traffic between them. Overlapping CIDRs would make routing ambiguous and cause the peering to fail.
 
-VNet peering is configured bidirectionally — a peering from A to B and a separate peering from B to A. This allows all nodes to communicate over private IPs using Azure's backbone network rather than the public internet. This is important for two reasons:
+VNet peering is configured bidirectionally — a peering from A to B and a separate peering from B to A. This allows all nodes to communicate over private IPs using Azure’s backbone network rather than the public internet.
 
-- k3s requires workers to reach the control plane's private IP when joining the cluster
-- Cross-region latency measurements reflect physical datacenter distance rather than internet routing variability
+This design is important for three reasons:
 
-Each region has its own Network Security Group allowing inbound SSH (22) and the k3s API port (6443).
+- k3s requires worker nodes to reach the control plane’s private IP when joining the cluster  
+- Kubernetes workloads can communicate across regions as if they were on the same private network  
+- Cross-region latency reflects physical datacenter distance rather than internet routing variability  
+
+To support multi-node Kubernetes networking, peering is configured with forwarded traffic enabled, ensuring that VXLAN-encapsulated pod traffic is allowed between VNets.
+
+Each region has its own Network Security Group. Instead of exposing services broadly or relying on public IP ranges, all NSG rules restrict traffic to the Azure `VirtualNetwork` source tag. This ensures that only traffic originating from within the peered VNets is allowed.
+
+The following inbound ports are explicitly allowed:
+
+- **22/TCP** — SSH access for node administration  
+- **6443/TCP** — Kubernetes API server (k3s control plane)  
+- **8472/UDP** — Flannel VXLAN overlay network for pod-to-pod communication across nodes  
+- **10250/TCP** — Kubelet API used for node management, logs, and exec operations  
 
 ## 5.4 Virtual Machines
 

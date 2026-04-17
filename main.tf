@@ -1,12 +1,3 @@
-locals {
-  nodes = {
-    vm0 = { region = var.region_a, role = "control" }
-    vm1 = { region = var.region_a, role = "worker"  }
-    vm2 = { region = var.region_a, role = "worker"  }
-    vm3 = { region = var.region_b, role = "worker"  }
-    vm4 = { region = var.region_b, role = "worker"  }
-  }
-}
 
 # Resource group
 
@@ -72,28 +63,20 @@ resource "azurerm_network_security_group" "nsg_a" {
   location            = var.region_a
   resource_group_name = azurerm_resource_group.rg.name
 
-  security_rule {
-    name                       = "allow-ssh"
-    priority                   = 100
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
+  dynamic "security_rule" {
+    for_each = local.k3s_nsg_rules
 
-  security_rule {
-    name                       = "allow-k3s-api"
-    priority                   = 110
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "6443"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+    content {
+      name                       = security_rule.value.name
+      priority                   = security_rule.value.priority
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = security_rule.value.protocol
+      source_port_range          = "*"
+      destination_port_range     = security_rule.value.port
+      source_address_prefix      = "VirtualNetwork"
+      destination_address_prefix = "*"
+    }
   }
 }
 
@@ -102,27 +85,19 @@ resource "azurerm_network_security_group" "nsg_b" {
   location            = var.region_b
   resource_group_name = azurerm_resource_group.rg.name
 
-  security_rule {
-    name                       = "allow-ssh"
-    priority                   = 100
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "22"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
-  }
+  dynamic "security_rule" {
+    for_each = local.k3s_nsg_rules
 
-  security_rule {
-    name                       = "allow-k3s-api"
-    priority                   = 110
-    direction                  = "Inbound"
-    access                     = "Allow"
-    protocol                   = "Tcp"
-    source_port_range          = "*"
-    destination_port_range     = "6443"
-    source_address_prefix      = "*"
-    destination_address_prefix = "*"
+    content {
+      name                       = security_rule.value.name
+      priority                   = security_rule.value.priority
+      direction                  = "Inbound"
+      access                     = "Allow"
+      protocol                   = security_rule.value.protocol
+      source_port_range          = "*"
+      destination_port_range     = security_rule.value.port
+      source_address_prefix      = "VirtualNetwork"
+      destination_address_prefix = "*"
+    }
   }
 }

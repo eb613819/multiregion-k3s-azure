@@ -1,7 +1,3 @@
-locals {
-  nodes_a = { for k, v in local.nodes : k => v if v.region == var.region_a }
-  nodes_b = { for k, v in local.nodes : k => v if v.region == var.region_b }
-}
 
 # Public IPs
 
