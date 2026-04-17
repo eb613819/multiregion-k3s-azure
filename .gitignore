@@ -22,7 +22,7 @@ k3s_azure.pub
 vault_pass.txt
 .vault_pass
 
-./ansible/inventory.yml
+ansible/inventory.yml
 
 # OS
 .DS_Store
