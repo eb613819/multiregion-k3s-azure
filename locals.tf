@@ -13,24 +13,28 @@ locals {
       priority = 100
       protocol = "Tcp"
       port     = "22"
+      source   = "*"
     },
     {
       name     = "allow-k3s-api"
       priority = 110
       protocol = "Tcp"
       port     = "6443"
+      source   = "VirtualNetwork"
     },
     {
       name     = "allow-flannel"
       priority = 120
       protocol = "Udp"
       port     = "8472"
+      source   = "VirtualNetwork"
     },
     {
       name     = "allow-kubelet"
       priority = 130
       protocol = "Tcp"
       port     = "10250"
+      source   = "VirtualNetwork"
     }
   ]
 

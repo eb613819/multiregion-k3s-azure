@@ -74,7 +74,7 @@ resource "azurerm_network_security_group" "nsg_a" {
       protocol                   = security_rule.value.protocol
       source_port_range          = "*"
       destination_port_range     = security_rule.value.port
-      source_address_prefix      = "VirtualNetwork"
+      source_address_prefix      = security_rule.value.source
       destination_address_prefix = "*"
     }
   }
@@ -96,7 +96,7 @@ resource "azurerm_network_security_group" "nsg_b" {
       protocol                   = security_rule.value.protocol
       source_port_range          = "*"
       destination_port_range     = security_rule.value.port
-      source_address_prefix      = "VirtualNetwork"
+      source_address_prefix      = security_rule.value.source
       destination_address_prefix = "*"
     }
   }
