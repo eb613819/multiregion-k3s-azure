@@ -1,0 +1,15 @@
+---
+- name: Install k3s control plane
+  hosts: control_plane
+  become: yes
+  roles:
+    - k3s_control_plane
+ 
+- name: Install k3s workers
+  hosts: workers
+  become: yes
+  vars:
+    k3s_server_ip: "{{ hostvars[groups['control_plane'][0]].private_ip }}"
+  roles:
+    - k3s_worker
+ 

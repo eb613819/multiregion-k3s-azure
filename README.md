@@ -316,7 +316,6 @@ k3s-multiregion-azure/
 ├── secrets.auto.tfvars         # gitignored — subscription ID
 ├── secrets.auto.tfvars.example # Committed template for secrets file
 ├── .gitignore
-└── ansible/                    # Cluster configuration (see Section 6)
 ```
 
 ## 5.2 Variable Design
@@ -387,38 +386,35 @@ locals {
 
 This drives two separate VM resource blocks, each creating only the nodes assigned to that region. Adding a node requires only adding an entry to the `nodes` local.
 
-### VM Size and Image
+### VM Size
 
-| Setting | Value |
-|---------|-------|
-| VM Size | Standard_B2ats_v2 |
-| Image | Canonical ubuntu-24_04-lts / server |
-| Auth | RSA SSH key only, password auth disabled |
+Getting a VM size that would actually provision took several attempts. `Standard_B2pts_v2` (ARM64) was the first choice but was unavailable in every region tried. `Standard_B2ats_v2` (AMD64) showed no capacity restrictions via `az vm list-skus` but still failed with a capacity error in both `eastus2` and `westus3`. Azure checks SKU availability and physical capacity independently — a SKU can appear unrestricted while having no actual capacity. `northcentralus` and `mexicocentral` were selected after confirming provisioning actually succeeded there.
 
-VM size selection was constrained by regional capacity availability. `Standard_B2pts_v2` (ARM64) was initially used but was unavailable in the required regions. `Standard_B2ats_v2` (AMD64) was available in both `northcentralus` and `mexicocentral`. The image SKU was updated from `server-arm64` to `server` to match.
-
-Azure also rejected ed25519 SSH keys for this VM series despite the same key working in other regions. An RSA key is required.
+Switching to AMD64 also required updating the image SKU from `server-arm64` to `server`.
 
 **Note**: The size of the control plane VM is updated to `Standard_B2als_v2` in [section 6.3](#63-control-plane-installation).
+
+### SSH Key
+
+Azure rejected ed25519 keys for `Standard_B2ats_v2` in these regions despite the same key working on the same VM series in a previous project. RSA (4096-bit) is required.
+
+### Provider Version
+
+Upgrading from `azurerm ~> 3.0` to `~> 4.0` introduced a breaking change: `subscription_id` must now be explicitly declared in the provider block. This is kept out of version control in `secrets.auto.tfvars`.
+
+### Inconsistent Apply Failures
+
+Early apply runs produced `Provider produced inconsistent result after apply` errors on networking resources. These appeared to be caused by Azure failing mid-apply during the capacity error runs, leaving the provider state inconsistent. The fix was to delete the resource group directly via the Azure CLI and remove the state file before re-applying.
 
 ## 5.5 Outputs
 
 Three outputs are defined:
 
-- `vm_public_ips` — map of all node names to public IPs, used for SSH access
-- `vm_private_ips` — map of all node names to private IPs
-- `control_plane_private_ip` — private IP of vm0 specifically, used by Ansible when constructing the k3s agent join command for Region B workers
+- `vm_public_ips` — all node names to public IPs, used for SSH access
+- `vm_private_ips` — all node names to private IPs
+- `control_plane_private_ip` — private IP of vm0, used by Ansible when constructing the k3s agent join command for Region B workers
 
-In addition to supporting manual access and cluster bootstrap, these outputs are used to **automatically generate an Ansible inventory file via OpenTofu**. A `local_file` resource consumes `vm_public_ips` (and role/region metadata from `local.nodes`) to produce a structured `inventory.yml`.
-
-This approach ensures that:
-
-- The Ansible inventory always reflects the current infrastructure state  
-- No manual IP copying is required between provisioning and configuration stages  
-- Node grouping (control plane vs workers) is derived directly from Terraform-defined roles  
-- Multi-region placement is preserved automatically in the inventory structure  
-
-The generated inventory is used as the single source of truth for Ansible when installing and configuring the k3s cluster.
+These outputs also drive automatic Ansible inventory generation via a `local_file` resource in `inventory.tf`. This ensures the inventory always reflects the current infrastructure state and no manual IP copying is needed between provisioning and cluster setup.
 
 ## 5.6 Baseline Latency Measurements
 
@@ -434,26 +430,37 @@ After provisioning, ping was used to measure round-trip latency between nodes. A
 
 The ~52x latency difference between intra-region and cross-region communication confirms that the infrastructure provides a meaningful and measurable topology signal. This is the core property the cluster needs to support future scheduling experiments.
 
-## 5.7 Challenges and Observations
-
-**Regional capacity constraints** — `Standard_B2pts_v2` (ARM64) and `Standard_B2ats_v2` (AMM64) both reported as available via `az vm list-skus` but failed to provision with a capacity error in both `eastus2` and `westus3`. Capacity availability and SKU availability are checked independently by Azure; a SKU can show no restrictions while still having insufficient physical capacity. `northcentralus` and `mexicocentral` were selected after confirming actual provisioning success.
-
-**SSH key type restriction** — Azure rejected ed25519 keys for the `Standard_B2ats_v2` series in these regions. The same ed25519 key worked on the same VM series in `northcentralus` during a previous project. RSA (4096-bit) is required for this deployment.
-
-**Provider version** — upgrading from `azurerm ~> 3.0` to `~> 4.0` introduced a breaking change requiring `subscription_id` to be explicitly declared in the provider block. This value is kept out of version control in `secrets.auto.tfvars`.
-
-**Inconsistent apply failures** — early apply attempts produced `Provider produced inconsistent result after apply` errors on networking resources. These appeared to be caused by Azure transiently failing mid-apply during the capacity error runs, leaving the provider in an inconsistent state. Resolution required deleting the resource group directly via the Azure CLI and removing the state file before re-applying cleanly.
-
 ---
 
 # 6. Development: Cluster
 
-This section documents the deployment of a multi-region k3s cluster using Ansible across Azure virtual machines.
+This phase installs k3s across all five nodes using Ansible, forming a single multi-region Kubernetes cluster. The output is a running cluster with all nodes joined and verified.
+
+The playbook must be run from `/ansible` using:
+```bash
+ansible-playbook playbooks/cluster.yml
+```
 
 ## 6.1 Ansible Directory Structure
+```bash
+ansible/
+├── ansible.cfg
+├── inventory.yml              # opentofu-generated
+├── group_vars/
+│   └── all.yml
+├── playbooks/
+│   └── cluster.yml
+└── roles/
+    ├── k3s_control_plane/
+    │   └── tasks/
+    │       └── main.yml
+    └── k3s_worker/
+        └── tasks/
+            └── main.yml
+```
 
 ## 6.2 Inventory Generation
-An inventory is generated for Ansible by OpenTofu in `inventory.tf`:
+The inventory is generated by OpenTofu in `inventory.tf` using a `local_file` resource that writes `ansible/inventory.yml` on every `tofu apply`. Each host entry includes its public IP for SSH access, private IP for intra-cluster communication, and the SSH user and Python interpreter Ansible needs:
 ```hcl
 resource "local_file" "ansible_inventory" {
   filename = "${path.module}/ansible/inventory.yml"
@@ -516,7 +523,7 @@ resource "local_file" "ansible_inventory" {
   })
 }
 ```
-And looks like this (**Note**: IPs will be different every run):
+The generated file looks like this (IPs change on every destroy/apply):
 ```yml
 "all":
   "children":
@@ -554,73 +561,34 @@ And looks like this (**Note**: IPs will be different every run):
           "ansible_user": "ubuntu"
           "private_ip": "10.1.1.5"
 ```
-The inventory defines two primary groups:
-- `control_plane`: Single node hosting the k3s server
-- `workers`: Four nodes distributed across two Azure regions
-
-Each host includes:
-- Public IP (`ansible_host`) for SSH access
-- Private IP (`private_ip`) for intra-cluster communication
-- SSH user and Python interpreter configuration
-
-The inventory enables Ansible to:
-- Configure the control plane first
-- Propagate the cluster join token to worker nodes
-- Join all workers to the cluster using the control plane’s private IP
 
 ## 6.3 Control Plane Installation
-The control plane is installed using the official k3s installation script. The playbook performs the following steps:
-1. Installs the k3s server
-2. Waits for the node token to be generated
-3. Extracts and stores the token for worker node use
-4. Verifies that the Kubernetes API is ready
+The control plane role installs the k3s server, waits for the node token to be written, reads and stores the token as a fact for workers to use, then verifies the cluster is ready.
 
-### Readiness Validation Iteration
+The readiness check went through a couple of iterations. The initial approach polled the API health endpoint:
 
-Initial attempts to validate the API used a simple health check:
 ```bash
 curl -k https://127.0.0.1:6443/healthz
 ```
-However, this approach caused the playbook to hang. Two issues were identified:
 
-- The control plane VM (`Standard_B2ats_v2`) was resource-constrained, leading to slow or unstable initialization
-- The health check logic incorrectly assumed a successful response would contain "ok"
+This caused the playbook to hang. Two things were wrong: the control plane VM (`Standard_B2ats_v2`) was under-resourced and initializing slowly, and the check was looking for `"ok"` in the response body. After upgrading the control plane to `Standard_B2als_v2` the API started responding, but returned a 401:
 
-After upgrading the control plane to `Standard_B2als_v2`, the API began responding consistently, but returned:
-```JSON
-{
-  "message": "Unauthorized",
-  "code": 401
-}
+```json
+{ "message": "Unauthorized", "code": 401 }
 ```
-This indicated that the API server was running, but the readiness check condition was invalid.
 
-#### Final Approach
+The API was running, but the check was wrong. Rather than trying to parse HTTP responses, the readiness check was replaced with:
 
-The readiness check was updated to validate cluster functionality instead of raw API response:
 ```bash
 k3s kubectl get nodes
 ```
-This ensures:
-- The API server is reachable
-- Authentication is functioning
-- The control plane is fully initialized
+
+This succeeds only when the API server is up, authentication is working, and the control plane is fully initialized.
 
 ## 6.4 Worker Node Installation
-Worker nodes are installed using the k3s agent with the following parameters:
-- `K3S_URL`: Control plane private IP
-- `K3S_TOKEN`: Retrieved dynamically from the control plane
+Each worker joins the cluster using the k3s agent installation script with `K3S_URL` set to the control plane's private IP and `K3S_TOKEN` read dynamically from the control plane host vars.
 
-Each worker executes the k3s installation script and attempts to join the cluster.
-
-### Initial Issue
-
-During early runs, worker installation appeared to hang. This was initially attributed to networking issues or token propagation.
-
-However, the root cause was that the control plane was not fully ready when workers attempted to join.
-
-#### Resolution
-By improving the control plane readiness check [section 6.3](#63-control-plane-installation), worker nodes were able to join successfully without modification to the worker installation logic.
+Early runs appeared to hang during worker installation. The initial assumption was a networking or token propagation issue, but the real cause was simpler: workers were trying to join before the control plane was fully ready. Once the control plane readiness check was fixed in [6.3](#63-control-plane-installation), workers joined cleanly without any changes to the worker role itself.
 
 ## 6.5 Cluster Validation
 Cluster state was verified directly from the control plane using:
@@ -635,20 +603,10 @@ k3s-vm4   Ready    <none>                 2m38s   v1.30.0+k3s1   10.1.1.5      <
 k3s-vm3   Ready    <none>                 2m38s   v1.30.0+k3s1   10.1.1.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
 k3s-vm0   Ready    control-plane,master   3m      v1.30.0+k3s1   10.0.1.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
 ```
-The output confirmed:
-- All five nodes successfully joined the cluster
-- Nodes from both regions were present:
-  - `10.0.1.x` (North Central US)
-  - `10.1.1.x` (Mexico Central)
-- All nodes reported Ready status
 
-This validated:
-- Successful control plane initialization
-- Proper token distribution
-- Cross-region connectivity via private IPs
+All five nodes joined and all reported Ready, with internal IPs from both regions (`10.0.1.x` and `10.1.1.x`) confirming cross-region connectivity over private IPs.
 
-### Workload Scheduling Validation
-To further validate cluster functionality, a sample workload was deployed using the nginx image:
+To further validate scheduling across regions, a five-replica nginx deployment was run:
 ```bash
 sudo k3s kubectl create deployment nginx --image=nginx --replicas=5
 sudo k3s kubectl get pods -o wide
@@ -661,58 +619,10 @@ nginx-bf5d5cf98-cjgqt   1/1     Running   0          21s   10.42.3.3   k3s-vm4  
 nginx-bf5d5cf98-8rfjg   1/1     Running   0          21s   10.42.1.4   k3s-vm2   <none>           <none>
 nginx-bf5d5cf98-pxchp   1/1     Running   0          21s   10.42.4.3   k3s-vm3   <none>           <none>
 ```
-The resulting pod distribution showed that workloads were scheduled across all nodes in both regions. Each pod was assigned a unique overlay network IP (`10.42.x.x`) and placed on different cluster nodes, confirming that the scheduler was operating correctly in a multi-region environment.
-
-This confirmed:
-- Successful workload scheduling across all nodes
-- Even distribution across both Azure regions
-- Functional cluster networking using the k3s overlay network
-
-## 6.6 Challenges and Observations
-Several key challenges were encountered during deployment:
-
-### Resource Constraints
-
-The initial control plane VM size was insufficient for reliable k3s initialization. This resulted in:
-- SSH instability
-- Delayed API startup
-- Inconsistent behavior during automation
-
-Upgrading the VM resolved these issues.
-
-### Misleading API Health Checks
-
-A naive health check using `/healthz` led to incorrect conclusions about API availability. The API returned `401 Unauthorized`, which indicated:
-- The server was running
-- The check itself was flawed
-
-Switching to a `kubectl`-based readiness check provided a more accurate signal of cluster health.
-
-### Timing and Initialization Order
-
-Worker nodes attempted to join the cluster before the control plane was fully ready. This created the appearance of failed or hanging installations.
-
-Ensuring proper readiness before proceeding resolved this issue without requiring changes to worker configuration.
-
-### Multi-Region Networking
-
-The cluster successfully spans multiple Azure regions using private IP communication over peered virtual networks. This confirms that:
-
-Cross-region node communication is functional
-The cluster can operate without relying on public endpoints
+Pods were distributed across all five nodes including both Mexico Central workers, confirming the overlay network was functioning across regions and the scheduler was placing workloads cluster-wide.
 
 ---
 
 # 7. Development: Application Deployment
 
 *This section will be completed after application deployment.*
-
-## 7.1 Application Overview
-
-## 7.2 Services
-
-## 7.3 Deployment
-
-## 7.4 Validating Cross-Region Scheduling
-
-## 7.5 Challenges and Observations
