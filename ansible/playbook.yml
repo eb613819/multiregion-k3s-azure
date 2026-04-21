@@ -23,6 +23,15 @@
       set_fact:
         k3s_token: "{{ node_token.content | b64decode | trim }}"
 
+    - name: Wait for k3s kubectl to respond
+      shell: |
+        k3s kubectl get nodes
+      register: k3s_ready
+      retries: 30
+      delay: 5
+      until: k3s_ready.rc == 0
+
+
 - name: Install k3s workers
   hosts: workers
   become: yes

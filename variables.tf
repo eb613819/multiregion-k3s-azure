@@ -28,6 +28,11 @@ variable "vm_size" {
   type        = string
 }
 
+variable "control_plane_size" {
+  description = "VM size for control plane"
+  type        = string
+}
+
 variable "image" {
   description = "OS image for all VMs"
   type = object({

@@ -399,6 +399,8 @@ VM size selection was constrained by regional capacity availability. `Standard_B
 
 Azure also rejected ed25519 SSH keys for this VM series despite the same key working in other regions. An RSA key is required.
 
+**Note**: The size of the control plane VM is updated to `Standard_B2als_v2` in [section 6.3](#63-control-plane-installation).
+
 ## 5.5 Outputs
 
 Three outputs are defined:
@@ -446,23 +448,262 @@ The ~52x latency difference between intra-region and cross-region communication 
 
 # 6. Development: Cluster
 
-*This section will be completed after k3s installation.*
+This section documents the deployment of a multi-region k3s cluster using Ansible across Azure virtual machines.
 
 ## 6.1 Ansible Directory Structure
 
 ## 6.2 Inventory Generation
+An inventory is generated for Ansible by OpenTofu in `inventory.tf`:
+```hcl
+resource "local_file" "ansible_inventory" {
+  filename = "${path.module}/ansible/inventory.yml"
+
+  content = yamlencode({
+    all = {
+      children = {
+        control_plane = {
+          hosts = {
+            for k, v in local.nodes :
+            k => {
+              ansible_host = (
+                v.region == var.region_a ?
+                azurerm_public_ip.pip_a[k].ip_address :
+                azurerm_public_ip.pip_b[k].ip_address
+              )
+
+              private_ip = (
+                v.region == var.region_a ?
+                azurerm_network_interface.nic_a[k].private_ip_address :
+                azurerm_network_interface.nic_b[k].private_ip_address
+              )
+
+              ansible_user               = var.admin_username
+              ansible_python_interpreter = "/usr/bin/python3"
+            } if v.role == "control"
+          }
+        }
+
+        workers = {
+          hosts = {
+            for k, v in local.nodes :
+            k => {
+              ansible_host = (
+                v.region == var.region_a ?
+                azurerm_public_ip.pip_a[k].ip_address :
+                azurerm_public_ip.pip_b[k].ip_address
+              )
+
+              private_ip = (
+                v.region == var.region_a ?
+                azurerm_network_interface.nic_a[k].private_ip_address :
+                azurerm_network_interface.nic_b[k].private_ip_address
+              )
+
+              ansible_user               = var.admin_username
+              ansible_python_interpreter = "/usr/bin/python3"
+            } if v.role == "worker"
+          }
+        }
+
+        k3s_cluster = {
+          children = {
+            control_plane = {}
+            workers       = {}
+          }
+        }
+      }
+    }
+  })
+}
+```
+And looks like this (**Note**: IPs will be different every run):
+```yml
+"all":
+  "children":
+    "control_plane":
+      "hosts":
+        "vm0":
+          "ansible_host": "20.98.57.114"
+          "ansible_python_interpreter": "/usr/bin/python3"
+          "ansible_user": "ubuntu"
+          "private_ip": "10.0.1.4"
+    "k3s_cluster":
+      "children":
+        "control_plane": {}
+        "workers": {}
+    "workers":
+      "hosts":
+        "vm1":
+          "ansible_host": "52.162.33.7"
+          "ansible_python_interpreter": "/usr/bin/python3"
+          "ansible_user": "ubuntu"
+          "private_ip": "10.0.1.6"
+        "vm2":
+          "ansible_host": "135.232.254.30"
+          "ansible_python_interpreter": "/usr/bin/python3"
+          "ansible_user": "ubuntu"
+          "private_ip": "10.0.1.5"
+        "vm3":
+          "ansible_host": "158.23.177.25"
+          "ansible_python_interpreter": "/usr/bin/python3"
+          "ansible_user": "ubuntu"
+          "private_ip": "10.1.1.4"
+        "vm4":
+          "ansible_host": "158.23.177.45"
+          "ansible_python_interpreter": "/usr/bin/python3"
+          "ansible_user": "ubuntu"
+          "private_ip": "10.1.1.5"
+```
+The inventory defines two primary groups:
+- `control_plane`: Single node hosting the k3s server
+- `workers`: Four nodes distributed across two Azure regions
+
+Each host includes:
+- Public IP (`ansible_host`) for SSH access
+- Private IP (`private_ip`) for intra-cluster communication
+- SSH user and Python interpreter configuration
+
+The inventory enables Ansible to:
+- Configure the control plane first
+- Propagate the cluster join token to worker nodes
+- Join all workers to the cluster using the control plane’s private IP
 
 ## 6.3 Control Plane Installation
+The control plane is installed using the official k3s installation script. The playbook performs the following steps:
+1. Installs the k3s server
+2. Waits for the node token to be generated
+3. Extracts and stores the token for worker node use
+4. Verifies that the Kubernetes API is ready
+
+### Readiness Validation Iteration
+
+Initial attempts to validate the API used a simple health check:
+```bash
+curl -k https://127.0.0.1:6443/healthz
+```
+However, this approach caused the playbook to hang. Two issues were identified:
+
+- The control plane VM (`Standard_B2ats_v2`) was resource-constrained, leading to slow or unstable initialization
+- The health check logic incorrectly assumed a successful response would contain "ok"
+
+After upgrading the control plane to `Standard_B2als_v2`, the API began responding consistently, but returned:
+```JSON
+{
+  "message": "Unauthorized",
+  "code": 401
+}
+```
+This indicated that the API server was running, but the readiness check condition was invalid.
+
+#### Final Approach
+
+The readiness check was updated to validate cluster functionality instead of raw API response:
+```bash
+k3s kubectl get nodes
+```
+This ensures:
+- The API server is reachable
+- Authentication is functioning
+- The control plane is fully initialized
 
 ## 6.4 Worker Node Installation
+Worker nodes are installed using the k3s agent with the following parameters:
+- `K3S_URL`: Control plane private IP
+- `K3S_TOKEN`: Retrieved dynamically from the control plane
+
+Each worker executes the k3s installation script and attempts to join the cluster.
+
+### Initial Issue
+
+During early runs, worker installation appeared to hang. This was initially attributed to networking issues or token propagation.
+
+However, the root cause was that the control plane was not fully ready when workers attempted to join.
+
+#### Resolution
+By improving the control plane readiness check [section 6.3](#63-control-plane-installation), worker nodes were able to join successfully without modification to the worker installation logic.
 
 ## 6.5 Cluster Validation
+Cluster state was verified directly from the control plane using:
+```bash
+sudo k3s kubectl get nodes -o wide
+```
+```console
+NAME      STATUS   ROLES                  AGE     VERSION        INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION      CONTAINER-RUNTIME
+k3s-vm2   Ready    <none>                 2m42s   v1.30.0+k3s1   10.0.1.5      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
+k3s-vm1   Ready    <none>                 2m42s   v1.30.0+k3s1   10.0.1.6      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
+k3s-vm4   Ready    <none>                 2m38s   v1.30.0+k3s1   10.1.1.5      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
+k3s-vm3   Ready    <none>                 2m38s   v1.30.0+k3s1   10.1.1.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
+k3s-vm0   Ready    control-plane,master   3m      v1.30.0+k3s1   10.0.1.4      <none>        Ubuntu 24.04.4 LTS   6.17.0-1011-azure   containerd://1.7.15-k3s1
+```
+The output confirmed:
+- All five nodes successfully joined the cluster
+- Nodes from both regions were present:
+  - `10.0.1.x` (North Central US)
+  - `10.1.1.x` (Mexico Central)
+- All nodes reported Ready status
+
+This validated:
+- Successful control plane initialization
+- Proper token distribution
+- Cross-region connectivity via private IPs
+
+### Workload Scheduling Validation
+To further validate cluster functionality, a sample workload was deployed using the nginx image:
+```bash
+sudo k3s kubectl create deployment nginx --image=nginx --replicas=5
+sudo k3s kubectl get pods -o wide
+```
+```console
+NAME                    READY   STATUS    RESTARTS   AGE   IP          NODE      NOMINATED NODE   READINESS GATES
+nginx-bf5d5cf98-dz9hs   1/1     Running   0          21s   10.42.0.8   k3s-vm0   <none>           <none>
+nginx-bf5d5cf98-bgxwf   1/1     Running   0          21s   10.42.2.3   k3s-vm1   <none>           <none>
+nginx-bf5d5cf98-cjgqt   1/1     Running   0          21s   10.42.3.3   k3s-vm4   <none>           <none>
+nginx-bf5d5cf98-8rfjg   1/1     Running   0          21s   10.42.1.4   k3s-vm2   <none>           <none>
+nginx-bf5d5cf98-pxchp   1/1     Running   0          21s   10.42.4.3   k3s-vm3   <none>           <none>
+```
+The resulting pod distribution showed that workloads were scheduled across all nodes in both regions. Each pod was assigned a unique overlay network IP (`10.42.x.x`) and placed on different cluster nodes, confirming that the scheduler was operating correctly in a multi-region environment.
+
+This confirmed:
+- Successful workload scheduling across all nodes
+- Even distribution across both Azure regions
+- Functional cluster networking using the k3s overlay network
 
 ## 6.6 Challenges and Observations
+Several key challenges were encountered during deployment:
+
+### Resource Constraints
+
+The initial control plane VM size was insufficient for reliable k3s initialization. This resulted in:
+- SSH instability
+- Delayed API startup
+- Inconsistent behavior during automation
+
+Upgrading the VM resolved these issues.
+
+### Misleading API Health Checks
+
+A naive health check using `/healthz` led to incorrect conclusions about API availability. The API returned `401 Unauthorized`, which indicated:
+- The server was running
+- The check itself was flawed
+
+Switching to a `kubectl`-based readiness check provided a more accurate signal of cluster health.
+
+### Timing and Initialization Order
+
+Worker nodes attempted to join the cluster before the control plane was fully ready. This created the appearance of failed or hanging installations.
+
+Ensuring proper readiness before proceeding resolved this issue without requiring changes to worker configuration.
+
+### Multi-Region Networking
+
+The cluster successfully spans multiple Azure regions using private IP communication over peered virtual networks. This confirms that:
+
+Cross-region node communication is functional
+The cluster can operate without relying on public endpoints
 
 ---
 
-# 7. Development: Application
+# 7. Development: Application Deployment
 
 *This section will be completed after application deployment.*
 

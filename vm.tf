@@ -70,7 +70,7 @@ resource "azurerm_linux_virtual_machine" "vm_a" {
   name                = "${var.prefix}-${each.key}"
   location            = var.region_a
   resource_group_name = azurerm_resource_group.rg.name
-  size                = var.vm_size
+  size                = each.value.role == "control" ? var.control_plane_size : var.vm_size
   admin_username      = var.admin_username
 
   network_interface_ids = [azurerm_network_interface.nic_a[each.key].id]
@@ -106,7 +106,7 @@ resource "azurerm_linux_virtual_machine" "vm_b" {
   name                = "${var.prefix}-${each.key}"
   location            = var.region_b
   resource_group_name = azurerm_resource_group.rg.name
-  size                = var.vm_size
+  size                = each.value.role == "control" ? var.control_plane_size : var.vm_size
   admin_username      = var.admin_username
 
   network_interface_ids = [azurerm_network_interface.nic_b[each.key].id]
