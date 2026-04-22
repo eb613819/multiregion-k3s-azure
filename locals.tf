@@ -35,6 +35,13 @@ locals {
       protocol = "Tcp"
       port     = "10250"
       source   = "VirtualNetwork"
+    },
+    {
+      name     = "allow-nodeport"
+      priority = 140
+      protocol = "Tcp"
+      port     = "30080"
+      source   = "*"
     }
   ]
 
