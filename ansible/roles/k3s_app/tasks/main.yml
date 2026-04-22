@@ -1,0 +1,38 @@
+---
+- name: Copy serviceaccount manifest
+  copy:
+    src: serviceaccount.yaml
+    dest: /tmp/serviceaccount.yaml
+
+- name: Copy rbac manifest
+  copy:
+    src: rbac.yaml
+    dest: /tmp/rbac.yaml
+
+- name: Copy daemonset manifest
+  copy:
+    src: daemonset.yaml
+    dest: /tmp/daemonset.yaml
+
+- name: Apply serviceaccount
+  shell: k3s kubectl apply -f /tmp/serviceaccount.yaml
+
+- name: Apply rbac
+  shell: k3s kubectl apply -f /tmp/rbac.yaml
+
+- name: Apply daemonset
+  shell: k3s kubectl apply -f /tmp/daemonset.yaml
+
+- name: Wait for pods to be ready
+  shell: |
+    TOTAL=$(k3s kubectl get nodes --no-headers | wc -l)
+    READY=$(k3s kubectl get pods -l app=kube-latency-map --field-selector=status.phase=Running --no-headers | wc -l)
+    [ "$READY" -eq "$TOTAL" ]
+  register: pods_ready
+  retries: 20
+  delay: 10
+  until: pods_ready.rc == 0
+
+- name: Print UI URL
+  debug:
+    msg: "kube-latency-map is available at http://{{ ansible_host }}:30080"

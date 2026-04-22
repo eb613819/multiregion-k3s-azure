@@ -13,3 +13,8 @@
   roles:
     - k3s_worker
  
+- name: Deploy kube-latency-map
+  hosts: control_plane[0]
+  become: yes
+  roles:
+      - k3s_app
