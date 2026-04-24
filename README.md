@@ -452,11 +452,6 @@ The ~52x latency difference between intra-region and cross-region communication 
 
 This phase installs k3s across all five nodes using Ansible, forming a single multi-region Kubernetes cluster. The output is a running cluster with all nodes joined and verified.
 
-The playbook must be run from `/ansible` using:
-```bash
-ansible-playbook playbooks/cluster.yml
-```
-
 ## 6.1 Ansible Directory Structure
 ```bash
 ansible/
@@ -690,11 +685,6 @@ The role waits until all pods are running before completing, then prints the URL
 ok: [vm0] => {
     "msg": "kube-latency-map is available at http://52.162.202.124:30080"
 }
-```
-
-The application is deployed using the same playbook as the cluster creation. The playbook must be run from `ansible/` using:
-```bash
-ansible-playbook playbooks/cluster.yml
 ```
  
 ## 7.4 Validation
