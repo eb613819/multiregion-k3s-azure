@@ -23,7 +23,8 @@ This project builds a self-managed Kubernetes cluster spanning two Azure regions
    - [4.1 Prerequisites](#41-prerequisites)
    - [4.2 Configuration](#42-configuration)
    - [4.3 Provisioning](#43-provisioning)
-   - [4.4 Teardown](#44-teardown)
+   - [4.4 Cluster Setup and Application Deployment](#44-cluster-setup-and-application-deployment)
+   - [4.5 Teardown](#45-teardown)
 
 5. [Development: Infrastructure](#5-development-infrastructure)
    - [5.1 Repository Structure](#51-repository-structure)
@@ -32,7 +33,6 @@ This project builds a self-managed Kubernetes cluster spanning two Azure regions
    - [5.4 Virtual Machines](#54-virtual-machines)
    - [5.5 Outputs](#55-outputs)
    - [5.6 Baseline Latency Measurements](#56-baseline-latency-measurements)
-   - [5.7 Challenges and Observations](#57-challenges-and-observations)
 
 6. [Development: Cluster](#6-development-cluster)
    - [6.1 Ansible Directory Structure](#61-ansible-directory-structure)
@@ -40,14 +40,12 @@ This project builds a self-managed Kubernetes cluster spanning two Azure regions
    - [6.3 Control Plane Installation](#63-control-plane-installation)
    - [6.4 Worker Node Installation](#64-worker-node-installation)
    - [6.5 Cluster Validation](#65-cluster-validation)
-   - [6.6 Challenges and Observations](#66-challenges-and-observations)
 
-7. [Development: Application](#7-development-application)
-   - [7.1 Application Overview](#71-application-overview)
-   - [7.2 Services](#72-services)
+7. [Development: Application Deployment](#7-development-application-deployment)
+   - [7.1 Ansible Directory Structure](#71-ansible-directory-structure)
+   - [7.2 Application Overview](#72-application-overview)
    - [7.3 Deployment](#73-deployment)
-   - [7.4 Validating Cross-Region Scheduling](#74-validating-cross-region-scheduling)
-   - [7.5 Challenges and Observations](#75-challenges-and-observations)
+   - [7.4 Validation](#74-validation)
 
 ---
 
@@ -62,7 +60,7 @@ This project builds the infrastructure foundation for a future RL-driven Kuberne
 1. Provisions 5 virtual machines across two Azure regions using OpenTofu
 2. Connects the regions via VNet peering for private IP communication
 3. Installs k3s across all nodes to form a single multi-region Kubernetes cluster
-4. Deploys a containerized multi-service application to validate cross-region scheduling
+4. Deploys a containerized [latency visualization application](https://github.com/eb613819/kube-latency-map) to validate cross-region scheduling
 
 ### Research Question
 
@@ -72,20 +70,18 @@ This project builds the infrastructure foundation for a future RL-driven Kuberne
 
 - Provision a multi-region Azure VM cluster using infrastructure-as-code
 - Connect the two regions via VNet peering so nodes communicate over private IPs
-- Demonstrate measurable, consistent latency differences between intra-region and cross-region communication
+- Demonstrate measurable, consistent latency differences between intra-region and inter-region communication
 - Install k3s across all nodes to form a single unified cluster spanning both regions
-- Deploy a multi-service application and verify that pods are scheduled across nodes in both regions
+- Deploy a latency visualization application and verify that pods are scheduled across nodes in both regions
 - Verify the cluster operates reliably as a unified system and the application is externally accessible
 
 ## 1.2 Non-Goals
 
 - This project does not implement the RL scheduler itself
-- No application workload is instrumented for latency measurement in this phase
 - No managed Kubernetes service (AKS) is used
 
 ## 1.3 Future Work
 
-- Instrument inter-service communication to measure latency by pod placement
 - Develop and integrate a custom RL-based scheduler that replaces `kube-scheduler`
 - Use placement decisions and measured latency to train and evaluate scheduling models
 
@@ -103,7 +99,7 @@ This project builds the infrastructure foundation for a future RL-driven Kuberne
 **Ansible** is used to configure the cluster after provisioning:
 - Install k3s server on the control plane node
 - Join worker nodes across both regions to the cluster
-- Deploy the test application to validate scheduling
+- Deploy [kube-latency-map](https://github.com/eb613819/kube-latency-map) to validate scheduling and measure/visualize latency
 
 **k3s** is the chosen Kubernetes distribution. It is lightweight and exposes the control plane components, allowing future replacement of `kube-scheduler` with a custom RL-based implementation. It also allows all nodes across both regions to participate in a single cluster without the federation complexity that multi-region AKS deployments require.
 
@@ -137,14 +133,23 @@ A self-managed k3s cluster deployed on Azure VMs provides full control over the 
 
 Regions were selected based on subscription availability and geographic distance. `northcentralus` (Chicago) and `mexicocentral` (Querétaro) provide meaningful physical separation while remaining within the same subscription quota.
 
-Baseline latency measurements confirmed the expected topology:
-
-| Source | Destination | Relationship | Avg Latency |
-|--------|-------------|--------------|-------------|
-| vm0 | vm1 | Intra-region (northcentralus) | < 1ms |
-| vm3 | vm4 | Intra-region (mexicocentral) | < 1ms |
-| vm0 | vm3 | Cross-region | ~52ms |
-| vm0 | vm4 | Cross-region | ~52ms |
+Baseline ping measurements and final HTTP rtt measurements confirmed the expected topology.
+- Baseline ping measurements from [5.6](#56-baseline-latency-measurements):
+   | Source | Destination | Region Relationship | Avg RTT |
+   |--------|-------------|---------------------|---------|
+   | vm0 (northcentralus) | vm1 (northcentralus) | Intra-region | < 1ms |
+   | vm3 (mexicocentral) | vm4 (mexicocentral) | Intra-region | < 1ms |
+   | vm0 (northcentralus) | vm3 (mexicocentral) | Cross-region | ~52ms |
+   | vm0 (northcentralus) | vm4 (mexicocentral) | Cross-region | ~52ms |
+   | vm3 (mexicocentral) | vm0 (northcentralus) | Cross-region | ~52ms |
+- HTTP latency measurements from [7.4](#74-validation):
+   | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
+   |---|---|---|---|---|---|
+   | **k3s-vm0** | 1ms | 3ms | 3ms | 106ms | 106ms |
+   | **k3s-vm1** | 2ms | 2ms | 2ms | 54ms | 54ms |
+   | **k3s-vm2** | 3ms | 3ms | 3ms | 112ms | 106ms |
+   | **k3s-vm3** | 106ms | 106ms | 107ms | 1ms | 3ms |
+   | **k3s-vm4** | 111ms | 110ms | 106ms | 3ms | 2ms |
 
 ---
 
@@ -190,7 +195,7 @@ tofu -install-autocomplete
 ### Install Azure CLI
 1.) Install Azure CLI
 ```bash
-curl -sL https://aka.ms InstallAzureCLIDeb
+curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 ```
 2.) Authenticate with:
 ```bash
@@ -201,7 +206,7 @@ az login
 az account set --subscription 00000000-0000-0000-0000-000000000000
 ```
 You can confirm the active subscription again with:
-```powershell
+```bash
 az account show
 ```
 
@@ -237,7 +242,7 @@ Your subscription ID can be found with:
 az account show --query id -o tsv
 ```
 
-### Non-sensitive Configuration
+### Infrastructure
 `terraform.tfvars` is committed to the repository and contains all non-sensitive configuration. Edit it if you need to change regions, VM size, or image:
 
 ```hcl
@@ -253,6 +258,14 @@ image = {
   sku       = "server"
   version   = "latest"
 }
+```
+
+### Ansible SSH
+Update `ansible/ansible.cfg` with the path to your SSH private key:
+
+```ini
+[ssh_connection]
+private_key_file = ~/.ssh/k3s_azure
 ```
 
 ## 4.3 Provisioning
@@ -271,26 +284,29 @@ tofu output vm_private_ips
 tofu output control_plane_private_ip
 ```
 
-SSH into any node:
+To SSH into a node:
 ```bash
 ssh -i ~/.ssh/k3s_azure ubuntu@<public-ip>
 ```
 
-For convenience, add entries to `~/.ssh/config`:
-```
-Host k3s-control
-    HostName <vm0-public-ip>
-    User ubuntu
-    IdentityFile ~/.ssh/k3s_azure
+## 4.4 Cluster Setup and Application Deployment
+Run the Ansible playbook from the `ansible/` directory to install k3s and deploy the application:
 
-Host k3s-worker1
-    HostName <vm1-public-ip>
-    User ubuntu
-    IdentityFile ~/.ssh/k3s_azure
+```bash
+cd ansible
+ansible-playbook playbooks/cluster.yml
 ```
 
-## 4.4 Teardown
+Once complete, the playbook prints the URL of the latency visualization UI:
+```
+ok: [vm0] => {
+"msg": "kube-latency-map is available at http://<control-plane-public-ip>:30080"
+}
+```
+**Note**: The output URL is for the control plane, but any vm can serve the latency visualization UI.
 
+## 4.5 Teardown
+from the root of the repo:
 ```bash
 tofu destroy
 ```
@@ -676,7 +692,7 @@ ok: [vm0] => {
 }
 ```
 
-The application is deployed using the same playbook as the cluster creation. The playbook must be run from `/ansible` using:
+The application is deployed using the same playbook as the cluster creation. The playbook must be run from `ansible/` using:
 ```bash
 ansible-playbook playbooks/cluster.yml
 ```
@@ -690,7 +706,7 @@ The UI displays a 5x5 latency matrix: one row and one column per node. The diago
 | | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
 |---|---|---|---|---|---|
 | **k3s-vm0** | 1ms | 3ms | 3ms | 106ms | 106ms |
-| **k3s-vm1** | 2ms | 2ms | 2s | 54ms | 54ms |
+| **k3s-vm1** | 2ms | 2ms | 2ms | 54ms | 54ms |
 | **k3s-vm2** | 3ms | 3ms | 3ms | 112ms | 106ms |
 | **k3s-vm3** | 106ms | 106ms | 107ms | 1ms | 3ms |
 | **k3s-vm4** | 111ms | 110ms | 106ms | 3ms | 2ms |
