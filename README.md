@@ -689,17 +689,17 @@ The UI displays a 5x5 latency matrix: one row and one column per node. The diago
  
 | | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
 |---|---|---|---|---|---|
-| **k3s-vm0** | 2ms | 5ms | 4ms | 110ms | 107ms |
-| **k3s-vm1** | 4ms | 2ms | 3ms | 110ms | 106ms |
-| **k3s-vm2** | 4ms | 3ms | 2ms | 106ms | 105ms |
-| **k3s-vm3** | 56ms | 57ms | 57ms | 2ms | 3ms |
-| **k3s-vm4** | 106ms | 110ms | 107ms | 3ms | 3ms |
+| **k3s-vm0** | 1ms | 3ms | 3ms | 106ms | 106ms |
+| **k3s-vm1** | 2ms | 2ms | 2s | 54ms | 54ms |
+| **k3s-vm2** | 3ms | 3ms | 3ms | 112ms | 106ms |
+| **k3s-vm3** | 106ms | 106ms | 107ms | 1ms | 3ms |
+| **k3s-vm4** | 111ms | 110ms | 106ms | 3ms | 2ms |
  
 The results confirm the expected topology at the application layer:
  
-- **Intra-region HTTP RTT is 2–5ms**, compared to <1ms from the ping measurements in [section 5.6](#56-baseline-latency-measurements). The difference is consistent with HTTP overhead.
-- **Cross-region HTTP RTT is 105–110ms**, compared to ~52ms from ping — roughly 2x, also consistent with HTTP overhead on top of the underlying network latency.
-- **Loopback RTT is 2ms** on all nodes, confirming that HTTP overhead is consistent across the cluster and does not vary meaningfully by node.
-One notable observation is that the matrix is not perfectly symmetric. Traffic from vm3 to `northcentralus` measures ~56ms while traffic from `northcentralus` to vm3 measures ~110ms. The asymmetry likely reflects differences in processing load or network path at the time of measurement rather than a true directional latency difference.
+- **Intra-region HTTP RTT is 2–3ms**, compared to <1ms from the ping measurements in [section 5.6](#56-baseline-latency-measurements). The difference is consistent with HTTP overhead.
+- **Cross-region HTTP RTT is 54–112ms**, compared to ~52ms from ping —can get as high as roughly 2x, also consistent with HTTP overhead on top of the underlying network latency.
+- **Loopback RTT is 1-3ms** on all nodes, confirming that HTTP overhead is consistent across the cluster and does not vary meaningfully by node.
+One notable observation is that the matrix is not perfectly symmetric. This likely reflects differences in processing load or network path at the time of measurement rather than a true directional latency difference.
  
 The difference between intra-region and cross-region latency observed in the ping measurements is preserved at the application layer, confirming that the cluster provides a sufficiently controlled and measurable topology signal to serve as a testbed for RL-driven microservice scheduling experiments.
