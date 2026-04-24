@@ -143,7 +143,7 @@ Baseline ping measurements and final HTTP rtt measurements confirmed the expecte
    | vm0 (northcentralus) | vm4 (mexicocentral) | Cross-region | ~52ms |
    | vm3 (mexicocentral) | vm0 (northcentralus) | Cross-region | ~52ms |
 - HTTP latency measurements from [7.4](#74-validation):
-   | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
+   | | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
    |---|---|---|---|---|---|
    | **k3s-vm0** | 1ms | 3ms | 3ms | 106ms | 106ms |
    | **k3s-vm1** | 2ms | 2ms | 2ms | 54ms | 54ms |
