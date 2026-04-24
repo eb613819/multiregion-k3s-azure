@@ -624,5 +624,82 @@ Pods were distributed across all five nodes including both Mexico Central worker
 ---
 
 # 7. Development: Application Deployment
+ 
+This phase deploys a containerized latency visualization application to the cluster using Ansible. The output is a live web UI showing HTTP round-trip latency between all pods, confirming that the cluster's topology produces measurable and consistent latency differences at the application layer.
+ 
+## 7.1 Ansible Directory Structure
+ 
+```
+ansible/
+├── ansible.cfg
+├── inventory.yml
+├── group_vars/
+│   └── all.yml
+├── playbooks/
+│   └── cluster.yml
+└── roles/
+    ├── k3s_control_plane/
+    │   └── tasks/
+    │       └── main.yml
+    ├── k3s_worker/
+    │   └── tasks/
+    │       └── main.yml
+    └── k3s_app/
+        ├── files/
+        │   ├── serviceaccount.yaml
+        │   ├── rbac.yaml
+        │   └── daemonset.yaml
+        └── tasks/
+            └── main.yml
+```
+ 
+The application manifests are stored in `roles/k3s_app/files/` rather than cloned from the application repo at deploy time.
+ 
+## 7.2 Application Overview
+ 
+[kube-latency-map](https://github.com/eb613819/kube-latency-map) is a standalone Kubernetes latency visualization tool. It deploys one pod per node via a DaemonSet, measures HTTP round-trip latency between all pods, and displays the results as a live updating matrix in a web UI. Each pod probes all other pods on a configurable interval and exposes its measurements via a REST API. Any pod can serve the dashboard by aggregating measurements from all peers on demand and rendering the full matrix.
+ 
+The application is deployed from a published DockerHub image independent of this project. Full documentation is in its own repository.
+ 
+## 7.3 Deployment
+ 
+The application is deployed by the `k3s_app` role, which copies the three Kubernetes manifests to the control plane and applies them in order:
+ 
+1. `serviceaccount.yaml` — creates a dedicated identity for the pods
+2. `rbac.yaml` — grants that identity read-only permission to list pods in the namespace, used for peer discovery
+3. `daemonset.yaml` — schedules one pod per node and exposes the UI on port 30080 via a NodePort service
+The role waits until all pods are running before completing, then prints the URL of the UI:
+ 
+```
+ok: [vm0] => {
+    "msg": "kube-latency-map is available at http://52.162.202.124:30080"
+}
+```
 
-*This section will be completed after application deployment.*
+The application is deployed using the same playbook as the cluster creation. The playbook must be run from `/ansible` using:
+```bash
+ansible-playbook playbooks/cluster.yml
+```
+ 
+## 7.4 Validation
+ 
+The UI displays a 5x5 latency matrix: one row and one column per node. The diagonal shows each node's loopback RTT, which represents a rough HTTP overhead baseline on that node.
+ 
+![kube-latency-map UI](./images/kube_latency_map.png)
+ 
+| | k3s-vm0 | k3s-vm1 | k3s-vm2 | k3s-vm3 | k3s-vm4 |
+|---|---|---|---|---|---|
+| **k3s-vm0** | 2ms | 5ms | 4ms | 110ms | 107ms |
+| **k3s-vm1** | 4ms | 2ms | 3ms | 110ms | 106ms |
+| **k3s-vm2** | 4ms | 3ms | 2ms | 106ms | 105ms |
+| **k3s-vm3** | 56ms | 57ms | 57ms | 2ms | 3ms |
+| **k3s-vm4** | 106ms | 110ms | 107ms | 3ms | 3ms |
+ 
+The results confirm the expected topology at the application layer:
+ 
+- **Intra-region HTTP RTT is 2–5ms**, compared to <1ms from the ping measurements in [section 5.6](#56-baseline-latency-measurements). The difference is consistent with HTTP overhead.
+- **Cross-region HTTP RTT is 105–110ms**, compared to ~52ms from ping — roughly 2x, also consistent with HTTP overhead on top of the underlying network latency.
+- **Loopback RTT is 2ms** on all nodes, confirming that HTTP overhead is consistent across the cluster and does not vary meaningfully by node.
+One notable observation is that the matrix is not perfectly symmetric. Traffic from vm3 to `northcentralus` measures ~56ms while traffic from `northcentralus` to vm3 measures ~110ms. The asymmetry likely reflects differences in processing load or network path at the time of measurement rather than a true directional latency difference.
+ 
+The difference between intra-region and cross-region latency observed in the ping measurements is preserved at the application layer, confirming that the cluster provides a sufficiently controlled and measurable topology signal to serve as a testbed for RL-driven microservice scheduling experiments.
